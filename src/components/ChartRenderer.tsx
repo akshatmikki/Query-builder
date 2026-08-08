@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, Dimensions } from "react-native";
+import { View, Text, StyleSheet, Dimensions, Platform } from "react-native";
 import {
   VictoryChart,
   VictoryBar,
@@ -10,10 +10,13 @@ import {
   VictoryAxis,
   VictoryLegend,
   VictoryLabel,
+  VictoryVoronoiContainer,
+  VictoryTooltip,
 } from "victory-native";
 import { ChartConfig, OrderRecord } from "../types";
 import { aggregateForChart, foldOtherByCategory, foldOtherBySeries } from "../query/aggregate";
 import { formatCompact } from "../web/formatNumber";
+import { getFieldDef } from "../schema";
 
 const screenWidth = Dimensions.get("window").width;
 // Validated categorical palette (dataviz skill): fixed hue order, adjacent-pair
@@ -108,9 +111,9 @@ export default function ChartRenderer({ config, records, width }: Props) {
         a === "Other" ? 1 : b === "Other" ? -1 : 0
       )
     : [undefined];
-  const categoryCount = new Set(points.map((p) => p.x)).size;
   const height = 260;
-  const showBarLabels = config.type === "bar" && !hasSeries && categoryCount <= 12;
+  const xAxisTitle = getFieldDef(config.xField)?.label ?? "";
+  const yAxisTitle = config.aggregation === "count" ? "Count" : getFieldDef(config.yField)?.label ?? "";
 
   return (
     <View>
@@ -133,19 +136,44 @@ export default function ChartRenderer({ config, records, width }: Props) {
         width={w}
         height={height}
         domainPadding={20}
-        padding={{ top: 10, left: 56, right: 20, bottom: 64 }}
+        padding={{ top: 10, left: 68, right: 20, bottom: 78 }}
+        containerComponent={
+          Platform.OS === "web" ? (
+            <VictoryVoronoiContainer
+              voronoiDimension="x"
+              labels={({ datum }: any) =>
+                `${xAxisTitle ? `${xAxisTitle}: ` : ""}${truncateLabel(String(datum.x))}${
+                  datum.series ? ` (${datum.series})` : ""
+                }\n${yAxisTitle ? `${yAxisTitle}: ` : ""}${formatCompact(datum.y)}`
+              }
+              labelComponent={
+                <VictoryTooltip
+                  cornerRadius={4}
+                  flyoutStyle={{ fill: "#14171c", stroke: TEXT_COLOR }}
+                  style={{ fill: "#ffffff", fontSize: 9 }}
+                />
+              }
+            />
+          ) : undefined
+        }
       >
         <VictoryAxis
           tickFormat={(t) => truncateLabel(String(t))}
           style={{ tickLabels: { fontSize: 8, angle: -35, textAnchor: "end", fill: TEXT_COLOR } }}
+          label={xAxisTitle}
+          axisLabelComponent={<VictoryLabel dy={30} style={{ fontSize: 10, fontWeight: "700", fill: TEXT_COLOR }} />}
         />
         <VictoryAxis
           dependentAxis
           tickFormat={(t) => formatCompact(Number(t))}
           style={{ tickLabels: { fontSize: 8, fill: TEXT_COLOR } }}
+          label={yAxisTitle}
+          axisLabelComponent={<VictoryLabel dy={-48} style={{ fontSize: 10, fontWeight: "700", fill: TEXT_COLOR }} />}
         />
         {seriesNames.map((s, i) => {
-          const data = points.filter((p) => (s ? p.series === s : true)).map((p) => ({ x: p.x, y: p.y }));
+          const data = points
+            .filter((p) => (s ? p.series === s : true))
+            .map((p) => ({ x: p.x, y: p.y, series: p.series }));
           const color = SERIES_COLORS[i % SERIES_COLORS.length];
 
           if (config.type === "bar") {
@@ -154,7 +182,7 @@ export default function ChartRenderer({ config, records, width }: Props) {
                 key={String(s)}
                 data={data}
                 style={{ data: { fill: color } }}
-                labels={showBarLabels ? (d) => formatCompact(d.datum.y) : undefined}
+                labels={(d) => formatCompact(d.datum.y)}
                 labelComponent={<VictoryLabel dy={-6} style={{ fontSize: 8, fill: TEXT_COLOR }} />}
               />
             );
@@ -165,12 +193,21 @@ export default function ChartRenderer({ config, records, width }: Props) {
                 key={String(s)}
                 data={data}
                 style={{ data: { stroke: color, strokeWidth: 2 } }}
-                labels={(d) => (d.index === data.length - 1 ? formatCompact(d.datum.y) : "")}
-                labelComponent={<VictoryLabel dx={4} textAnchor="start" style={{ fontSize: 8, fill: TEXT_COLOR }} />}
+                labels={(d) => formatCompact(d.datum.y)}
+                labelComponent={<VictoryLabel dy={-8} textAnchor="middle" style={{ fontSize: 8, fill: TEXT_COLOR }} />}
               />
             );
           }
-          return <VictoryScatter key={String(s)} data={data} size={4} style={{ data: { fill: color } }} />;
+          return (
+            <VictoryScatter
+              key={String(s)}
+              data={data}
+              size={4}
+              style={{ data: { fill: color } }}
+              labels={(d) => formatCompact(d.datum.y)}
+              labelComponent={<VictoryLabel dy={-10} textAnchor="middle" style={{ fontSize: 8, fill: TEXT_COLOR }} />}
+            />
+          );
         })}
       </VictoryChart>
     </View>
