@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Modal, FlatList } from "
 import { useQuery } from "../../context/QueryContext";
 import { FIELD_SCHEMA, getFieldDef } from "../../schema";
 import { OrderRecord } from "../../types";
+import { GroupNode, buildGroups } from "../../query/groupRows";
 import Dropdown from "../Dropdown";
 import FieldPickerContent from "../../components/FieldPickerContent";
 import { colors, shadow, radius, webTransition } from "../theme";
@@ -26,43 +27,6 @@ function formatCell(key: string, value: unknown) {
 type FlatRow =
   | { kind: "banner"; key: string; level: number; field: string; label: string; count: number }
   | { kind: "data"; key: string; item: OrderRecord; zebra: number };
-
-interface GroupNode {
-  level: number;
-  field: string;
-  label: string;
-  path: string;
-  rows: OrderRecord[];
-  children?: GroupNode[];
-}
-
-// Recursively partitions rows by each field in `fields` in order, so the
-// first field is the outermost section and later fields nest inside it.
-function buildGroups(rows: OrderRecord[], fields: string[], level: number, parentPath: string): GroupNode[] {
-  if (level >= fields.length) return [];
-  const field = fields[level];
-  const map = new Map<string, OrderRecord[]>();
-  for (const rec of rows) {
-    const label = formatCell(field, rec[field]);
-    if (!map.has(label)) map.set(label, []);
-    map.get(label)!.push(rec);
-  }
-  const keys = Array.from(map.keys());
-  const known = keys.filter((k) => k !== "—").sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const unknown = keys.filter((k) => k === "—");
-  return [...known, ...unknown].map((label) => {
-    const path = `${parentPath}${parentPath ? "›" : ""}${field}=${label}`;
-    const groupRows = map.get(label)!;
-    return {
-      level,
-      field,
-      label,
-      path,
-      rows: groupRows,
-      children: level + 1 < fields.length ? buildGroups(groupRows, fields, level + 1, path) : undefined,
-    };
-  });
-}
 
 function flattenGroups(nodes: GroupNode[], collapsed: Set<string>, out: FlatRow[]) {
   nodes.forEach((node) => {
@@ -116,7 +80,7 @@ export default function TablePane({ density }: Props) {
 
   const grouped = useMemo(() => {
     if (groupByFields.length === 0) return null;
-    return buildGroups(sorted, groupByFields, 0, "");
+    return buildGroups(sorted, groupByFields, formatCell);
   }, [sorted, groupByFields]);
 
   const flatData: FlatRow[] = useMemo(() => {
