@@ -12,9 +12,10 @@ interface Props {
   onSelect: (f: FieldDef) => void;
   style?: ViewStyle;
   align?: "left" | "right";
+  fields?: FieldDef[];
 }
 
-export default function FieldDropdownButton({ label, placeholder = "Choose field...", onSelect, style, align }: Props) {
+export default function FieldDropdownButton({ label, placeholder = "Choose field...", onSelect, style, align, fields }: Props) {
   return (
     <Dropdown
       width={300}
@@ -33,6 +34,7 @@ export default function FieldDropdownButton({ label, placeholder = "Choose field
         <FieldPickerContent
           compact
           autoFocus
+          fields={fields}
           onSelect={(f) => {
             onSelect(f);
             close();

@@ -29,6 +29,9 @@ interface QueryContextValue {
   tableColumns: string[];
   setTableColumns: (cols: string[]) => void;
 
+  groupByFields: string[];
+  setGroupByFields: (fields: string[]) => void;
+
   charts: ChartConfig[];
   setCharts: (c: ChartConfig[]) => void;
 }
@@ -38,6 +41,7 @@ const QueryContext = createContext<QueryContextValue | undefined>(undefined);
 export const QueryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [root, setRoot] = useState<Group>(emptyRoot());
   const [tableColumns, setTableColumns] = useState<string[]>(DEFAULT_TABLE_COLUMNS);
+  const [groupByFields, setGroupByFields] = useState<string[]>([]);
   const [charts, setCharts] = useState<ChartConfig[]>([newChart(1)]);
 
   const filteredResults = useMemo(() => filterRecords(ALL_ORDERS, root), [root]);
@@ -53,6 +57,8 @@ export const QueryProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         resetQuery,
         tableColumns,
         setTableColumns,
+        groupByFields,
+        setGroupByFields,
         charts,
         setCharts,
       }}

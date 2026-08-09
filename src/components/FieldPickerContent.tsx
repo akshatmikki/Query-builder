@@ -7,18 +7,19 @@ interface Props {
   onSelect: (field: FieldDef) => void;
   autoFocus?: boolean;
   compact?: boolean;
+  fields?: FieldDef[];
 }
 
-export default function FieldPickerContent({ onSelect, autoFocus = true, compact = false }: Props) {
+export default function FieldPickerContent({ onSelect, autoFocus = true, compact = false, fields = FIELD_SCHEMA }: Props) {
   const [search, setSearch] = useState("");
 
   const sections = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = q
-      ? FIELD_SCHEMA.filter(
+      ? fields.filter(
           (f) => f.label.toLowerCase().includes(q) || f.key.toLowerCase().includes(q)
         )
-      : FIELD_SCHEMA;
+      : fields;
 
     const byGroup: Record<string, FieldDef[]> = {};
     filtered.forEach((f) => {
@@ -28,7 +29,7 @@ export default function FieldPickerContent({ onSelect, autoFocus = true, compact
     return Object.entries(byGroup)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([title, data]) => ({ title, data }));
-  }, [search]);
+  }, [search, fields]);
 
   return (
     <View style={compact ? styles.compactContainer : styles.container}>
