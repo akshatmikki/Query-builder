@@ -1,4 +1,4 @@
-# Order Query Builder (React Native / Expo)
+# Dynamic Reporting Studio (React Native / Expo)
 
 A mobile app for exploring the 905-order dataset: build filters, view results
 in a table, and chart them — all three stay in sync automatically.

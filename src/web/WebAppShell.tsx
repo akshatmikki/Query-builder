@@ -75,7 +75,7 @@ export default function WebAppShell() {
           )}
           <View style={styles.brandRow}>
             <View style={styles.brandMark} />
-            <Text style={styles.brand}>Order Query Studio</Text>
+            <Text style={styles.brand}>Dynamic Reporting Studio</Text>
           </View>
         </View>
 
