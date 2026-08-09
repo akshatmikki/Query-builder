@@ -19,7 +19,7 @@ const SECTIONS: { key: Section; label: string }[] = [
 ];
 
 export default function WebAppShell() {
-  const { filteredResults, charts, tableColumns, resetQuery } = useQuery();
+  const { filteredResults, charts, tableColumns, groupByFields, resetQuery } = useQuery();
   const layout = useLayoutMode();
 
   const [section, setSection] = useState<Section>("table");
@@ -58,7 +58,7 @@ export default function WebAppShell() {
       onSummaryFieldsChange={setSummaryFields}
       reportStatus={reportStatus}
       onGenerate={() => reportRef.current?.generate()}
-      onExportCsv={() => downloadCsv(filteredResults, tableColumns)}
+      onExportCsv={() => downloadCsv(filteredResults, tableColumns, groupByFields)}
     />
   );
 
