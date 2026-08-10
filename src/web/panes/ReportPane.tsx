@@ -1,14 +1,15 @@
-import React, { forwardRef, useImperativeHandle, useRef } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { View, Text, ScrollView, StyleSheet } from "react-native";
 import { useQuery } from "../../context/QueryContext";
 import { getFieldDef, ALL_ORDERS } from "../../schema";
 import { describeGroup, hasActiveFilters } from "../../query/describe";
-import ChartRenderer from "../../components/ChartRenderer";
 import { buildReportHtml } from "../../report/buildReportHtml";
 import { computeFieldSummary } from "../summaryStats";
 import { formatCompact } from "../formatNumber";
 import StatTile from "../StatTile";
+import ReportChartGrid, { ChartSpan } from "../ReportChartGrid";
 import { colors, shadow, radius } from "../theme";
+import { ChartConfig } from "../../types";
 
 export interface ReportPaneHandle {
   generate: () => Promise<void>;
@@ -92,6 +93,28 @@ const ReportPane = forwardRef<ReportPaneHandle, Props>(function ReportPane(
   const previewRows = filteredResults.slice(0, PREVIEW_ROWS);
   const summaries = summaryFields.map((key) => computeFieldSummary(filteredResults, key, getFieldDef(key)?.label ?? key));
 
+  // User-arranged order/emphasis for the chart grid — kept separate from
+  // `includedChartIds` (which only tracks membership) so drag reordering and
+  // the "full width" toggle survive re-renders without fighting that list.
+  const [chartOrder, setChartOrder] = useState<string[]>(() => includedChartIds);
+  const [chartSpans, setChartSpans] = useState<Record<string, ChartSpan>>({});
+
+  useEffect(() => {
+    setChartOrder((prev) => {
+      const kept = prev.filter((id) => includedChartIds.includes(id));
+      const added = includedChartIds.filter((id) => !kept.includes(id));
+      return [...kept, ...added];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includedChartIds.join(",")]);
+
+  const orderedCharts = chartOrder
+    .map((id) => includedCharts.find((c) => c.id === id))
+    .filter((c): c is ChartConfig => !!c);
+
+  const toggleChartSpan = (id: string) =>
+    setChartSpans((prev) => ({ ...prev, [id]: (prev[id] ?? "auto") === "full" ? "auto" : "full" }));
+
   useImperativeHandle(ref, () => ({
     generate: async () => {
       onStatusChange({ generating: true });
@@ -99,7 +122,7 @@ const ReportPane = forwardRef<ReportPaneHandle, Props>(function ReportPane(
         const rows = filteredResults.slice(0, rowCap);
         const truncated = filteredResults.length > rowCap;
 
-        const chartBlocks = includedCharts.map((c) => {
+        const chartBlocks = orderedCharts.map((c) => {
           const node = chartRefs.current[c.id];
           const svg = node && node.innerHTML ? node.innerHTML : "";
           return {
@@ -131,16 +154,23 @@ const ReportPane = forwardRef<ReportPaneHandle, Props>(function ReportPane(
 
   return (
     <ScrollView contentContainerStyle={styles.scroll}>
-      <Text style={styles.heading}>Report preview</Text>
-
-      <View style={styles.box}>
-        <Text style={styles.boxLabel}>Filters</Text>
-        <Text style={styles.boxText}>{hasActiveFilters(root) ? describeGroup(root) : "None — full dataset"}</Text>
+      <View style={styles.headingRow}>
+        <View>
+          <Text style={styles.heading}>Report preview</Text>
+          <Text style={styles.headingSubtitle}>What you arrange here is what gets exported to the PDF.</Text>
+        </View>
       </View>
 
-      <View style={styles.box}>
-        <Text style={styles.boxLabel}>Columns ({tableColumns.length})</Text>
-        <Text style={styles.boxText}>{tableColumns.map((c) => getFieldDef(c)?.label ?? c).join(", ") || "None selected"}</Text>
+      <View style={styles.infoRow}>
+        <View style={styles.box}>
+          <Text style={styles.boxLabel}>Filters</Text>
+          <Text style={styles.boxText}>{hasActiveFilters(root) ? describeGroup(root) : "None — full dataset"}</Text>
+        </View>
+
+        <View style={styles.box}>
+          <Text style={styles.boxLabel}>Columns ({tableColumns.length})</Text>
+          <Text style={styles.boxText}>{tableColumns.map((c) => getFieldDef(c)?.label ?? c).join(", ") || "None selected"}</Text>
+        </View>
       </View>
 
       <Text style={styles.sectionLabel}>Summary ({summaries.length})</Text>
@@ -161,23 +191,28 @@ const ReportPane = forwardRef<ReportPaneHandle, Props>(function ReportPane(
       ))}
 
       <Text style={styles.sectionLabel}>Charts included ({includedCharts.length})</Text>
-      {includedCharts.length === 0 && (
+      {includedCharts.length === 0 ? (
         <Text style={styles.note}>
           {configuredCharts.length === 0
             ? "No charts configured yet — add one from the Charts view."
             : "No charts checked for inclusion — toggle them on the right."}
         </Text>
+      ) : (
+        <>
+          <Text style={styles.gridHint}>Drag ⠿ to reorder · toggle a chart to “Full width” to feature it</Text>
+          <ReportChartGrid
+            charts={orderedCharts}
+            records={filteredResults}
+            chartWidth={chartWidth}
+            spans={chartSpans}
+            onSpanToggle={toggleChartSpan}
+            onReorder={setChartOrder}
+            registerRef={(id, node) => {
+              chartRefs.current[id] = node;
+            }}
+          />
+        </>
       )}
-      {includedCharts.map((c) => (
-        <View key={c.id} style={[styles.chartCard, { maxWidth: chartWidth + 26 }]}>
-          <Text style={styles.chartTitle}>{c.title}</Text>
-          {/* Ref wraps only the chart itself — buildReportHtml adds its own
-              <h3> title, so capturing the title Text here would duplicate it. */}
-          <View ref={(r) => (chartRefs.current[c.id] = r)}>
-            <ChartRenderer config={c} records={filteredResults} width={chartWidth} />
-          </View>
-        </View>
-      ))}
 
       <Text style={styles.sectionLabel}>
         Table preview ({Math.min(previewRows.length, PREVIEW_ROWS)} of {filteredResults.length} rows shown — export
@@ -210,17 +245,20 @@ const ReportPane = forwardRef<ReportPaneHandle, Props>(function ReportPane(
 export default ReportPane;
 
 const styles = StyleSheet.create({
-  scroll: { padding: 24, paddingBottom: 60, maxWidth: 780 },
-  heading: { fontSize: 19, fontWeight: "800", color: colors.text, marginBottom: 14 },
-  box: { backgroundColor: colors.panel, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: 13, marginBottom: 12, ...shadow.card },
+  scroll: { padding: 24, paddingBottom: 60, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  headingRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16 },
+  heading: { fontSize: 20, fontWeight: "800", color: colors.text },
+  headingSubtitle: { fontSize: 12.5, color: colors.subtext, marginTop: 3 },
+  infoRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  box: { flexGrow: 1, flexBasis: 280, backgroundColor: colors.panel, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: 13, marginBottom: 12, ...shadow.card },
   boxLabel: { fontSize: 11, fontWeight: "700", color: colors.subtext, textTransform: "uppercase", marginBottom: 4, letterSpacing: 0.3 },
   boxText: { fontSize: 14, color: colors.text },
   sectionLabel: { fontSize: 13, fontWeight: "700", color: colors.text, marginTop: 12, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.3 },
   note: { fontSize: 12, color: colors.subtext, marginBottom: 8 },
   summaryCard: { backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 13, marginBottom: 12, ...shadow.card },
   statRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
-  chartCard: { backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 13, marginBottom: 12, ...shadow.card },
   chartTitle: { fontWeight: "700", marginBottom: 6, color: colors.text },
+  gridHint: { fontSize: 11.5, color: colors.subtext, marginBottom: 10, marginTop: -2 },
   tableScroll: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.panel, overflow: "hidden" },
   tableHeaderRow: { flexDirection: "row", backgroundColor: colors.panelAlt },
   tableHeaderCell: { width: 130, padding: 6, fontSize: 11, fontWeight: "700", color: colors.text },
