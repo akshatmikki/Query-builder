@@ -48,6 +48,7 @@ export default function WebAppShell() {
       density={density}
       onDensityChange={setDensity}
       selectedChartId={selectedChartId}
+      onSelectChart={setSelectedChartId}
       rowCap={rowCap}
       onRowCapChange={setRowCap}
       includedChartIds={includedChartIds}
@@ -111,7 +112,7 @@ export default function WebAppShell() {
 
         <View style={styles.middle}>
           {section === "table" && <TablePane density={density} />}
-          {section === "charts" && <ChartsPane selectedChartId={selectedChartId} onSelectChart={setSelectedChartId} />}
+          {section === "charts" && <ChartsPane selectedChartId={selectedChartId} />}
           {section === "report" && (
             <ReportPane
               ref={reportRef}

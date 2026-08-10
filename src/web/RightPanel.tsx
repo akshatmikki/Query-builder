@@ -1,13 +1,15 @@
 import React from "react";
 import { View, Text, Pressable, ScrollView, StyleSheet, TextInput, ActivityIndicator } from "react-native";
-import { useQuery } from "../context/QueryContext";
-import { ChartConfig, ChartType, Aggregation } from "../types";
+import { useQuery, newChart } from "../context/QueryContext";
+import { ChartConfig, ChartType, Aggregation, DateOperator, OrderRecord } from "../types";
 import FieldDropdownButton from "./FieldDropdownButton";
 import ColumnChecklist from "./ColumnChecklist";
+import ValueInput from "../components/ValueInput";
 import { colors, webTransition } from "./theme";
 import PanelSection from "./PanelSection";
 import { ReportStatus } from "./panes/ReportPane";
 import { getFieldDef, FIELD_SCHEMA } from "../schema";
+import { OPERATORS_BY_TYPE } from "../operators";
 
 export type Section = "table" | "charts" | "report";
 
@@ -22,11 +24,31 @@ const CHART_WIDTH_CHOICES: { label: string; value: number }[] = [
 ];
 const NUMBER_FIELDS = FIELD_SCHEMA.filter((f) => f.type === "number");
 
+// Bounds the chart's date-range pickers to dates that actually occur in the
+// field's data, so the operator can't be set to a range with no matches.
+function getDateFieldBounds(records: OrderRecord[], field: string): { min?: string; max?: string } {
+  let min: number | undefined;
+  let max: number | undefined;
+  for (const rec of records) {
+    const raw = rec[field];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const t = Date.parse(String(raw));
+    if (isNaN(t)) continue;
+    if (min === undefined || t < min) min = t;
+    if (max === undefined || t > max) max = t;
+  }
+  return {
+    min: min !== undefined ? new Date(min).toISOString() : undefined,
+    max: max !== undefined ? new Date(max).toISOString() : undefined,
+  };
+}
+
 interface Props {
   section: Section;
   density: "comfortable" | "compact";
   onDensityChange: (d: "comfortable" | "compact") => void;
   selectedChartId: string | null;
+  onSelectChart: (id: string) => void;
   rowCap: number;
   onRowCapChange: (n: number) => void;
   includedChartIds: string[];
@@ -45,6 +67,7 @@ export default function RightPanel({
   density,
   onDensityChange,
   selectedChartId,
+  onSelectChart,
   rowCap,
   onRowCapChange,
   includedChartIds,
@@ -69,7 +92,9 @@ export default function RightPanel({
         {section === "table" && (
           <TableCustomization density={density} onDensityChange={onDensityChange} onExportCsv={onExportCsv} />
         )}
-        {section === "charts" && <ChartCustomization selectedChartId={selectedChartId} />}
+        {section === "charts" && (
+          <ChartCustomization selectedChartId={selectedChartId} onSelectChart={onSelectChart} />
+        )}
         {section === "report" && (
           <ReportCustomization
             rowCap={rowCap}
@@ -127,91 +152,175 @@ function TableCustomization({
   );
 }
 
-function ChartCustomization({ selectedChartId }: { selectedChartId: string | null }) {
-  const { charts, setCharts } = useQuery();
+function ChartCustomization({
+  selectedChartId,
+  onSelectChart,
+}: {
+  selectedChartId: string | null;
+  onSelectChart: (id: string) => void;
+}) {
+  const { charts, setCharts, filteredResults } = useQuery();
   const config = charts.find((c) => c.id === selectedChartId);
+  const dateBounds = config ? getDateFieldBounds(filteredResults, config.xField) : {};
 
-  if (!config) {
-    return (
-      <View style={styles.emptyState}>
-        <Text style={styles.emptyStateIcon}>◱</Text>
-        <Text style={styles.hint}>Select a chart in the middle panel to edit it.</Text>
-      </View>
-    );
-  }
+  const addChart = () => {
+    const c = newChart(charts.length + 1);
+    setCharts([...charts, c]);
+    onSelectChart(c.id);
+  };
 
-  const update = (patch: Partial<ChartConfig>) =>
+  const update = (patch: Partial<ChartConfig>) => {
+    if (!config) return;
     setCharts(charts.map((c) => (c.id === config.id ? { ...c, ...patch } : c)));
+  };
 
-  const deleteChart = () => setCharts(charts.filter((c) => c.id !== config.id));
+  const deleteChart = () => {
+    if (!config) return;
+    const remaining = charts.filter((c) => c.id !== config.id);
+    setCharts(remaining);
+    onSelectChart(remaining[remaining.length - 1]?.id ?? "");
+  };
 
   return (
     <>
-      <PanelSection title="Title" defaultOpen>
-        <TextInput
-          style={styles.textInput}
-          value={config.title}
-          onChangeText={(t) => update({ title: t })}
-          placeholder="Chart title"
-        />
-      </PanelSection>
-
-      <PanelSection title="Chart type" defaultOpen>
-        <View style={styles.chipRow}>
-          {CHART_TYPES.map((t) => (
-            <Pressable key={t} style={[styles.chip, config.type === t && styles.chipActive]} onPress={() => update({ type: t })}>
-              <Text style={[styles.chipText, config.type === t && styles.chipTextActive]}>{t}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </PanelSection>
-
-      <PanelSection title="X field" subtitle="Category or date" defaultOpen>
-        <FieldDropdownButton
-          label={getFieldDef(config.xField)?.label ?? ""}
-          onSelect={(f) => update({ xField: f.key })}
-        />
-      </PanelSection>
-
-      <PanelSection title="Aggregation" defaultOpen>
-        <View style={styles.chipRow}>
-          {AGGS.map((a) => (
+      <PanelSection title="Charts" defaultOpen>
+        {charts.map((c) => {
+          const active = c.id === selectedChartId;
+          return (
             <Pressable
-              key={a}
-              style={[styles.chip, config.aggregation === a && styles.chipActive]}
-              onPress={() => update({ aggregation: a })}
+              key={c.id}
+              style={[styles.chartListRow, active && styles.chartListRowActive]}
+              onPress={() => onSelectChart(c.id)}
             >
-              <Text style={[styles.chipText, config.aggregation === a && styles.chipTextActive]}>{a}</Text>
+              <Text style={[styles.chartListLabel, active && styles.chartListLabelActive]} numberOfLines={1}>
+                {c.title || "Untitled chart"}
+              </Text>
             </Pressable>
-          ))}
-        </View>
+          );
+        })}
+        <Pressable style={styles.addChartBtn} onPress={addChart}>
+          <Text style={styles.addChartBtnText}>+ Add chart</Text>
+        </Pressable>
       </PanelSection>
 
-      {config.aggregation !== "count" && (
-        <PanelSection title="Y field" subtitle="Numeric" defaultOpen>
-          <FieldDropdownButton
-            label={getFieldDef(config.yField)?.label ?? ""}
-            onSelect={(f) => update({ yField: f.key })}
-          />
-        </PanelSection>
+      {!config && (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateIcon}>◱</Text>
+          <Text style={styles.hint}>
+            {charts.length === 0 ? "Add a chart to get started." : "Select a chart above to edit it."}
+          </Text>
+        </View>
       )}
 
-      <PanelSection title="Series / group by" subtitle="Optional" defaultOpen>
-        <FieldDropdownButton
-          label={config.seriesField ? getFieldDef(config.seriesField)?.label ?? "" : ""}
-          placeholder="None"
-          onSelect={(f) => update({ seriesField: f.key })}
-        />
-        {config.seriesField && (
-          <Pressable onPress={() => update({ seriesField: undefined })}>
-            <Text style={styles.link}>Clear series field</Text>
-          </Pressable>
-        )}
-      </PanelSection>
+      {config && (
+        <>
+          <PanelSection title="Title" defaultOpen>
+            <TextInput
+              style={styles.textInput}
+              value={config.title}
+              onChangeText={(t) => update({ title: t })}
+              placeholder="Chart title"
+            />
+          </PanelSection>
 
-      <Pressable style={styles.dangerBtn} onPress={deleteChart}>
-        <Text style={styles.dangerBtnText}>Delete chart</Text>
-      </Pressable>
+          <PanelSection title="Chart type" defaultOpen>
+            <View style={styles.chipRow}>
+              {CHART_TYPES.map((t) => (
+                <Pressable key={t} style={[styles.chip, config.type === t && styles.chipActive]} onPress={() => update({ type: t })}>
+                  <Text style={[styles.chipText, config.type === t && styles.chipTextActive]}>{t}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </PanelSection>
+
+          <PanelSection title="X field" subtitle="Category or date" defaultOpen>
+            <FieldDropdownButton
+              label={getFieldDef(config.xField)?.label ?? ""}
+              onSelect={(f) => update({ xField: f.key, dateRangeOperator: undefined, dateRangeValue: undefined })}
+            />
+          </PanelSection>
+
+          {getFieldDef(config.xField)?.type === "date" && (
+            <PanelSection title="Date range" subtitle="Restrict which dates this chart covers" defaultOpen>
+              <View style={styles.chipRow}>
+                {OPERATORS_BY_TYPE.date.map((op) => {
+                  const active = config.dateRangeOperator === op.value;
+                  return (
+                    <Pressable
+                      key={op.value}
+                      style={[styles.chip, active && styles.chipActive]}
+                      onPress={() =>
+                        update({
+                          dateRangeOperator: active ? undefined : (op.value as DateOperator),
+                          dateRangeValue: undefined,
+                        })
+                      }
+                    >
+                      <Text style={[styles.chipText, active && styles.chipTextActive]}>{op.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {dateBounds.min && dateBounds.max && (
+                <Text style={styles.hint}>
+                  Data available: {new Date(dateBounds.min).toLocaleDateString()} –{" "}
+                  {new Date(dateBounds.max).toLocaleDateString()}
+                </Text>
+              )}
+              {config.dateRangeOperator && (
+                <ValueInput
+                  field={getFieldDef(config.xField)!}
+                  operator={config.dateRangeOperator}
+                  value={config.dateRangeValue}
+                  onChange={(v) => update({ dateRangeValue: v })}
+                  minDate={dateBounds.min}
+                  maxDate={dateBounds.max}
+                />
+              )}
+            </PanelSection>
+          )}
+
+          <PanelSection title="Aggregation" defaultOpen>
+            <View style={styles.chipRow}>
+              {AGGS.map((a) => (
+                <Pressable
+                  key={a}
+                  style={[styles.chip, config.aggregation === a && styles.chipActive]}
+                  onPress={() => update({ aggregation: a })}
+                >
+                  <Text style={[styles.chipText, config.aggregation === a && styles.chipTextActive]}>{a}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </PanelSection>
+
+          {config.aggregation !== "count" && (
+            <PanelSection title="Y field" subtitle="Numeric" defaultOpen>
+              <FieldDropdownButton
+                label={getFieldDef(config.yField)?.label ?? ""}
+                onSelect={(f) => update({ yField: f.key })}
+              />
+            </PanelSection>
+          )}
+
+          <PanelSection title="Series / group by" subtitle="Optional" defaultOpen>
+            <FieldDropdownButton
+              label={config.seriesField ? getFieldDef(config.seriesField)?.label ?? "" : ""}
+              placeholder="None"
+              onSelect={(f) => update({ seriesField: f.key })}
+            />
+            {config.seriesField && (
+              <Pressable onPress={() => update({ seriesField: undefined })}>
+                <Text style={styles.link}>Clear series field</Text>
+              </Pressable>
+            )}
+          </PanelSection>
+
+          <Pressable style={styles.dangerBtn} onPress={deleteChart}>
+            <Text style={styles.dangerBtnText}>Delete chart</Text>
+          </Pressable>
+        </>
+      )}
     </>
   );
 }
@@ -353,6 +462,29 @@ const styles = StyleSheet.create({
     ...webTransition,
   },
   dangerBtnText: { color: colors.danger, fontWeight: "700", fontSize: 13 },
+  chartListRow: {
+    borderRadius: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    marginBottom: 4,
+    backgroundColor: colors.panelAlt,
+    ...webTransition,
+  },
+  chartListRowActive: { backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
+  chartListLabel: { fontSize: 13, fontWeight: "600", color: colors.text },
+  chartListLabelActive: { color: colors.accentDark },
+  addChartBtn: {
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: colors.accent,
+    borderRadius: 8,
+    paddingVertical: 9,
+    alignItems: "center",
+    marginTop: 4,
+    backgroundColor: colors.accentSoft,
+    ...webTransition,
+  },
+  addChartBtnText: { color: colors.accent, fontWeight: "700", fontSize: 12.5 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { borderWidth: 1, borderColor: colors.accent, borderRadius: 16, paddingVertical: 5, paddingHorizontal: 12, ...webTransition },
   chipActive: { backgroundColor: colors.accent },

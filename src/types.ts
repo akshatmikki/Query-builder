@@ -53,6 +53,8 @@ export interface ChartConfig {
   aggregation: Aggregation;
   seriesField?: string; // optional grouping/series field
   dateBucket?: DateBucket; // only used when xField is a date field; defaults to "month"
+  dateRangeOperator?: DateOperator; // optional range filter, only used when xField is a date field
+  dateRangeValue?: unknown; // string for before/after/onDay, [string, string] for between
 }
 
 export interface SavedQuery {

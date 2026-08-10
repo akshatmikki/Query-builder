@@ -12,9 +12,11 @@ interface Props {
   operator: Operator | "";
   value: unknown;
   onChange: (v: unknown) => void;
+  minDate?: string; // ISO string; for date fields, constrains the picker to the data's actual range
+  maxDate?: string;
 }
 
-export default function ValueInput({ field, operator, value, onChange }: Props) {
+export default function ValueInput({ field, operator, value, onChange, minDate, maxDate }: Props) {
   if (!operator || operatorNeedsNoValue(operator)) return null;
 
   if (field.type === "enum") {
@@ -60,8 +62,8 @@ export default function ValueInput({ field, operator, value, onChange }: Props) 
       return (
         <View>
           <View style={styles.row}>
-            <DatePickerField value={lo} onChange={(d) => onChange([d, hi])} placeholder="From" />
-            <DatePickerField value={hi} onChange={(d) => onChange([lo, d])} placeholder="To" />
+            <DatePickerField value={lo} onChange={(d) => onChange([d, hi])} placeholder="From" min={minDate} max={maxDate} />
+            <DatePickerField value={hi} onChange={(d) => onChange([lo, d])} placeholder="To" min={minDate} max={maxDate} />
           </View>
           {(lo || hi) ? (
             <Pressable onPress={() => onChange([undefined, undefined])}>
@@ -79,6 +81,8 @@ export default function ValueInput({ field, operator, value, onChange }: Props) 
           value={value as string | undefined}
           onChange={onChange}
           placeholder="Select date"
+          min={minDate}
+          max={maxDate}
         />
         {value ? (
           <Pressable onPress={() => onChange(undefined)}>
@@ -114,10 +118,14 @@ function DatePickerField({
   value,
   onChange,
   placeholder,
+  min,
+  max,
 }: {
   value?: string;
   onChange: (iso: string) => void;
   placeholder: string;
+  min?: string;
+  max?: string;
 }) {
   const [show, setShow] = useState(false);
   const dateVal = value ? new Date(value) : new Date();
@@ -130,6 +138,8 @@ function DatePickerField({
         {React.createElement("input", {
           type: "date",
           value: toInputDateValue(value),
+          min: toInputDateValue(min) || undefined,
+          max: toInputDateValue(max) || undefined,
           onChange: (e: any) => {
             const v = e.target.value;
             if (!v) return;
@@ -151,6 +161,8 @@ function DatePickerField({
         <DateTimePicker
           value={dateVal}
           mode="date"
+          minimumDate={min ? new Date(min) : undefined}
+          maximumDate={max ? new Date(max) : undefined}
           onChange={(_, selected) => {
             setShow(false);
             if (selected) onChange(selected.toISOString());

@@ -13,7 +13,7 @@ function toDate(v: unknown): number | null {
   return isNaN(t) ? null : t;
 }
 
-function evaluateRule(record: OrderRecord, rule: Rule): boolean {
+export function evaluateRule(record: OrderRecord, rule: Rule): boolean {
   if (!rule.field || !rule.operator) return true; // incomplete rule = no-op filter
   const def = getFieldDef(rule.field);
   const raw = record[rule.field];

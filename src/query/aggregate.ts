@@ -1,5 +1,6 @@
-import { Aggregation, ChartConfig, DateBucket, OrderRecord } from "../types";
+import { Aggregation, ChartConfig, DateBucket, DateOperator, OrderRecord } from "../types";
 import { getFieldDef } from "../schema";
+import { evaluateRule } from "./evaluate";
 
 export interface AggPoint {
   x: string; // category / date label
@@ -61,6 +62,116 @@ export function bucketDateValue(raw: unknown, granularity: DateBucket): string {
   }
 }
 
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Renders a bucketDateValue label (YYYY-MM-DD / YYYY-MM / YYYY-Qn / YYYY) as
+// something readable on an axis or in a tooltip, e.g. "Jul 2026", "Q3 2026".
+// `compact` drops the year for day/week labels — used on axis ticks where
+// space is tight; tooltips keep the full form.
+export function formatBucketLabel(label: string, granularity: DateBucket, compact = false): string {
+  if (label === "Unknown") return label;
+  switch (granularity) {
+    case "day":
+    case "week": {
+      const [y, m, d] = label.split("-").map(Number);
+      if (!y || !m || !d) return label;
+      return compact ? `${MONTH_ABBR[m - 1]} ${d}` : `${MONTH_ABBR[m - 1]} ${d}, ${y}`;
+    }
+    case "quarter": {
+      const [y, q] = label.split("-Q");
+      return q ? `Q${q} ${y}` : label;
+    }
+    case "year":
+      return label;
+    case "month":
+    default: {
+      const [y, m] = label.split("-").map(Number);
+      if (!y || !m) return label;
+      return `${MONTH_ABBR[m - 1]} ${y}`;
+    }
+  }
+}
+
+// Resolves the [start, end] span implied by a chart's date-range filter.
+// "before"/"after" only pin one side, so the open side falls back to the
+// earliest/latest date actually present in the (pre-filter) data.
+function resolveDateRange(
+  records: OrderRecord[],
+  field: string,
+  operator: DateOperator,
+  value: unknown
+): { start: Date; end: Date } | null {
+  const toDate = (v: unknown): Date | null => {
+    const t = Date.parse(String(v));
+    return isNaN(t) ? null : new Date(t);
+  };
+
+  if (operator === "between") {
+    const [lo, hi] = (value as [string, string]) ?? [undefined, undefined];
+    const start = toDate(lo);
+    const end = toDate(hi);
+    if (!start || !end) return null;
+    return start.getTime() <= end.getTime() ? { start, end } : { start: end, end: start };
+  }
+
+  if (operator === "onDay") {
+    const d = toDate(value);
+    return d ? { start: d, end: d } : null;
+  }
+
+  let dataMin: number | undefined;
+  let dataMax: number | undefined;
+  for (const rec of records) {
+    const raw = rec[field];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const t = Date.parse(String(raw));
+    if (isNaN(t)) continue;
+    if (dataMin === undefined || t < dataMin) dataMin = t;
+    if (dataMax === undefined || t > dataMax) dataMax = t;
+  }
+  if (dataMin === undefined || dataMax === undefined) return null;
+
+  if (operator === "before") {
+    const end = toDate(value);
+    return end ? { start: new Date(dataMin), end } : null;
+  }
+  if (operator === "after") {
+    const start = toDate(value);
+    return start ? { start, end: new Date(dataMax) } : null;
+  }
+  return null;
+}
+
+// Every bucket label between start and end, stepped by the bucket's own
+// granularity (capped so a mis-set range can't spin forever).
+function enumerateBucketLabels(start: Date, end: Date, granularity: DateBucket): string[] {
+  const labels: string[] = [];
+  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const endTime = end.getTime();
+  for (let guard = 0; cur.getTime() <= endTime && guard < 5000; guard++) {
+    labels.push(bucketDateValue(cur.toISOString(), granularity));
+    switch (granularity) {
+      case "day":
+        cur.setDate(cur.getDate() + 1);
+        break;
+      case "week":
+        cur.setDate(cur.getDate() + 7);
+        break;
+      case "quarter":
+        cur.setMonth(cur.getMonth() + 3);
+        break;
+      case "year":
+        cur.setFullYear(cur.getFullYear() + 1);
+        break;
+      case "month":
+      default:
+        cur.setMonth(cur.getMonth() + 1);
+        break;
+    }
+  }
+  return labels;
+}
+
 /**
  * Groups records by xField (and optional seriesField), aggregates yField,
  * and returns flat points ready to feed into victory-native.
@@ -70,7 +181,20 @@ export function aggregateForChart(records: OrderRecord[], config: ChartConfig): 
   const granularity = config.dateBucket ?? "month";
   const buckets = new Map<string, number[]>();
 
-  for (const rec of records) {
+  const scoped =
+    isDateX && config.dateRangeOperator
+      ? records.filter((rec) =>
+          evaluateRule(rec, {
+            kind: "rule",
+            id: "chart-date-range",
+            field: config.xField,
+            operator: config.dateRangeOperator!,
+            value: config.dateRangeValue,
+          })
+        )
+      : records;
+
+  for (const rec of scoped) {
     const xRaw = rec[config.xField];
     const x =
       xRaw === null || xRaw === undefined || xRaw === ""
@@ -90,6 +214,19 @@ export function aggregateForChart(records: OrderRecord[], config: ChartConfig): 
 
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(y);
+  }
+
+  // A date-range filter defines an explicit span — show every date in it on
+  // the x-axis, including ones with no matching records, rather than only
+  // the dates that happened to have data. Doesn't apply to pie (no x-axis)
+  // or series charts (filling per-series gaps would be ambiguous).
+  if (isDateX && config.type !== "pie" && config.dateRangeOperator && !config.seriesField) {
+    const range = resolveDateRange(records, config.xField, config.dateRangeOperator, config.dateRangeValue);
+    if (range) {
+      for (const label of enumerateBucketLabels(range.start, range.end, granularity)) {
+        if (!buckets.has(label)) buckets.set(label, []);
+      }
+    }
   }
 
   const points: AggPoint[] = [];
